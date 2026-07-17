@@ -15,6 +15,13 @@ import (
 
 // user selected directory
 func ShowDirectoryPicker() fs.FS {
+	// Parent (cafe) may supply a FileSystemDirectoryHandle from a drag-drop
+	// gesture via window.__wanixFsaHandle so we do not open a second picker.
+	pending := js.Global().Get("__wanixFsaHandle")
+	if pending.Truthy() {
+		js.Global().Set("__wanixFsaHandle", js.Undefined())
+		return NewFS(pending)
+	}
 	dir := jsutil.Await(js.Global().Get("window").Call("showDirectoryPicker"))
 	return NewFS(dir)
 }

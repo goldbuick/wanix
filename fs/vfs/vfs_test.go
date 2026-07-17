@@ -27,7 +27,7 @@ func TestNamespace(t *testing.T) {
 	ns := New(context.Background())
 
 	// Test file binding
-	ns.Bind(testFS, "file1.txt", "bound-file.txt", ModeReplace)
+	ns.Bind(testFS, "file1.txt", "bound-file.txt", BindReplace)
 
 	content, err := fs.ReadFile(ns, "bound-file.txt")
 	if err != nil {
@@ -38,7 +38,7 @@ func TestNamespace(t *testing.T) {
 	}
 
 	// Test directory binding
-	ns.Bind(testFS, ".", "bound-dir", ModeReplace)
+	ns.Bind(testFS, ".", "bound-dir", BindReplace)
 	content, err = fs.ReadFile(ns, "bound-dir/dir/file2.txt")
 	if err != nil {
 		t.Fatalf("Failed to open file in bound directory: %v", err)
@@ -63,7 +63,7 @@ func TestNamespace(t *testing.T) {
 	}
 }
 
-func TestResolveFS(t *testing.T) {
+func TestRoute(t *testing.T) {
 	ns := New(context.Background())
 
 	subFS := fskit.MapFS{
@@ -81,41 +81,41 @@ func TestResolveFS(t *testing.T) {
 		"bindsub":  subFS,
 	}
 
-	ns.Bind(rootFS, ".", ".", ModeAfter)
-	ns.Bind(bindsubFS, ".", "bind", ModeAfter)
+	ns.Bind(rootFS, ".", ".", BindAfter)
+	ns.Bind(bindsubFS, ".", "bind", BindAfter)
 
-	subfs, _, err := ns.ResolveFS(context.Background(), ".")
+	subfs, _, err := ns.Route(context.Background(), ".")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(subfs, rootFS) {
-		t.Fatal("ResolveFS(.) is not rootFS")
+		t.Fatal("Route(.) is not rootFS")
 	}
 
-	subfs, _, err = ns.ResolveFS(context.Background(), "bind")
+	subfs, _, err = ns.Route(context.Background(), "bind")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(subfs, bindsubFS) {
-		t.Fatal("ResolveFS(bind) is not bindsubFS")
+		t.Fatal("Route(bind) is not bindsubFS")
 	}
 
-	// requires fskit.MapFS to have proper ResolveFS() implementation
+	// requires fskit.MapFS to have proper Route() implementation
 	var rname string
-	subfs, rname, err = ns.ResolveFS(context.Background(), "bind/bindsub/subfile")
+	subfs, rname, err = fs.Resolve(ns, context.Background(), "bind/bindsub/subfile")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(subfs, subFS) {
-		t.Fatalf("ResolveFS(bind/bindsub/subfile) is not subFS: %T %s", subfs, rname)
+		t.Fatalf("Resolve(bind/bindsub/subfile) is not subFS: %T %s", subfs, rname)
 	}
 
-	subfs, rname, err = ns.ResolveFS(context.Background(), "rootsub/subdir")
+	subfs, rname, err = fs.Resolve(ns, context.Background(), "rootsub/subdir")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(subfs, subFS) {
-		t.Fatalf("ResolveFS(rootsub/subdir) is not subFS: %s %T", rname, subfs)
+		t.Fatalf("Resolve(rootsub/subdir) is not subFS: %s %T", rname, subfs)
 	}
 }
 
@@ -130,10 +130,10 @@ func TestFileBindOverRootBind(t *testing.T) {
 	}
 
 	ns := New(context.Background())
-	if err := ns.Bind(abfs, ".", ".", ModeAfter); err != nil {
+	if err := ns.Bind(abfs, ".", ".", BindAfter); err != nil {
 		t.Fatal(err)
 	}
-	if err := ns.Bind(cfs, "c", "c", ModeAfter); err != nil {
+	if err := ns.Bind(cfs, "c", "c", BindAfter); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,7 +159,7 @@ func TestRecursiveSubpathBind(t *testing.T) {
 		"inner": loopFS,
 	}
 
-	ns.Bind(rootFS, ".", ".", ModeAfter)
+	ns.Bind(rootFS, ".", ".", BindAfter)
 
 	_, err := fs.StatContext(context.Background(), ns, ".")
 	if err != nil {
@@ -179,10 +179,10 @@ func TestHiddenSelfBind(t *testing.T) {
 	}
 
 	ns := New(context.Background())
-	if err := ns.Bind(mfs, ".", ".", ModeAfter); err != nil {
+	if err := ns.Bind(mfs, ".", ".", BindAfter); err != nil {
 		t.Fatal(err)
 	}
-	if err := ns.Bind(ns, "#two", "two", ModeAfter); err != nil {
+	if err := ns.Bind(ns, "#two", "two", BindAfter); err != nil {
 		t.Fatal(err)
 	}
 
@@ -218,7 +218,7 @@ func TestNamespaceHidden(t *testing.T) {
 	}
 
 	ns := New(context.Background())
-	ns.Bind(testFS, ".", "#foo", ModeReplace)
+	ns.Bind(testFS, ".", "#foo", BindReplace)
 
 	e, _ := fs.ReadDir(ns, ".")
 	if len(e) != 0 {
@@ -253,9 +253,9 @@ func TestUnionBinding(t *testing.T) {
 
 	// Create namespace with union binding at root and in dir
 	ns := New(context.Background())
-	ns.Bind(fs1, ".", ".", ModeAfter)
-	ns.Bind(fs2, ".", ".", ModeAfter)
-	ns.Bind(fs2, ".", "dir", ModeAfter)
+	ns.Bind(fs1, ".", ".", BindAfter)
+	ns.Bind(fs2, ".", ".", BindAfter)
+	ns.Bind(fs2, ".", "dir", BindAfter)
 
 	// Test ReadDir in root
 	entries, err := fs.ReadDir(ns, ".")
@@ -293,8 +293,8 @@ func TestBindingModes(t *testing.T) {
 
 	// Test replace mode
 	ns := New(context.Background())
-	ns.Bind(fs1, ".", "test", ModeReplace)
-	ns.Bind(fs2, ".", "test", ModeReplace)
+	ns.Bind(fs1, ".", "test", BindReplace)
+	ns.Bind(fs2, ".", "test", BindReplace)
 
 	content, err := fs.ReadFile(ns, "test/file.txt")
 	if err != nil {
@@ -306,8 +306,8 @@ func TestBindingModes(t *testing.T) {
 
 	// Test after mode (default)
 	ns = New(context.Background())
-	ns.Bind(fs2, ".", "test", ModeAfter)
-	ns.Bind(fs1, ".", "test", ModeAfter)
+	ns.Bind(fs2, ".", "test", BindAfter)
+	ns.Bind(fs1, ".", "test", BindAfter)
 
 	content, err = fs.ReadFile(ns, "test/file.txt")
 	if err != nil {
@@ -319,8 +319,8 @@ func TestBindingModes(t *testing.T) {
 
 	// Test before mode
 	ns = New(context.Background())
-	ns.Bind(fs1, ".", "test", ModeReplace)
-	ns.Bind(fs2, ".", "test", ModeBefore)
+	ns.Bind(fs1, ".", "test", BindReplace)
+	ns.Bind(fs2, ".", "test", BindBefore)
 
 	content, err = fs.ReadFile(ns, "test/file.txt")
 	if err != nil {
@@ -340,7 +340,7 @@ func TestSynthesizedDirectories(t *testing.T) {
 
 	// Bind a file in a deep path
 	ns := New(context.Background())
-	ns.Bind(testFS, "file.txt", "a/b/c/file.txt", ModeAfter)
+	ns.Bind(testFS, "file.txt", "a/b/c/file.txt", BindAfter)
 
 	// Test that we can read parent directories
 	tests := []struct {
@@ -404,7 +404,7 @@ func TestSynthesizedDirectories(t *testing.T) {
 	}
 	// Test directory binding with synthesized parents
 	ns2 := New(context.Background())
-	ns2.Bind(testFS, ".", "x/y/z", ModeAfter)
+	ns2.Bind(testFS, ".", "x/y/z", BindAfter)
 
 	// Verify parent directories are synthesized
 	dirs := []string{".", "x", "x/y", "x/y/z"}
@@ -454,16 +454,16 @@ func TestMkdirOnLeaf(t *testing.T) {
 		"dir": memfs,
 	}
 
-	ns.Bind(middlefs, ".", "sub", ModeAfter)
+	ns.Bind(middlefs, ".", "sub", BindAfter)
 
-	// first we'll use ResolveFS manually to get the memfs
+	// use Resolve to walk through the bind table to memfs
 
-	subfs, _, err := ns.ResolveFS(context.Background(), "sub/dir/file")
+	subfs, _, err := fs.Resolve(ns, context.Background(), "sub/dir/file")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(subfs, memfs) {
-		t.Fatalf("ResolveFS(sub/dir/file) is not memfs: %T", subfs)
+		t.Fatalf("Resolve(sub/dir/file) is not memfs: %T", subfs)
 	}
 
 	err = fs.Mkdir(subfs, "newdir1", 0755)
@@ -519,10 +519,10 @@ func TestWritableRootOverRootBind(t *testing.T) {
 	emptyfs := memfs.New()
 
 	ns := New(context.Background())
-	if err := ns.Bind(mfs, ".", ".", ModeAfter); err != nil {
+	if err := ns.Bind(mfs, ".", ".", BindAfter); err != nil {
 		t.Fatal(err)
 	}
-	if err := ns.Bind(emptyfs, ".", ".", ModeAfter); err != nil {
+	if err := ns.Bind(emptyfs, ".", ".", BindAfter); err != nil {
 		t.Fatal(err)
 	}
 
@@ -576,12 +576,32 @@ func TestRecursiveUnion(t *testing.T) {
 		},
 	}
 
-	ns.Bind(afs, "a", ".", ModeAfter)
-	ns.Bind(bfs, "b", ".", ModeAfter)
+	ns.Bind(afs, "a", ".", BindAfter)
+	ns.Bind(bfs, "b", ".", BindAfter)
 
-	e, _ := fs.ReadDir(ns, "bin")
+	// Recursive union: bin was never bound directly, but both trees have bin/
+	// subdirs, so the listing merges entries from a/bin and b/bin.
+	e, err := fs.ReadDir(ns, "bin")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(e) != 2 {
-		t.Fatal("expected 2 files in bin dir listing")
+		t.Fatalf("expected 2 files in bin dir listing, got %d", len(e))
 	}
 
+	content, err := fs.ReadFile(ns, "bin/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "content1" {
+		t.Fatalf("bin/a: got %q", content)
+	}
+
+	content, err = fs.ReadFile(ns, "bin/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "content2" {
+		t.Fatalf("bin/b: got %q", content)
+	}
 }

@@ -43,14 +43,10 @@ func (d *Device) Open(name string) (fs.File, error) {
 }
 
 func (d *Device) OpenContext(ctx context.Context, name string) (fs.File, error) {
-	fsys, rname, err := d.ResolveFS(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	return fs.OpenContext(ctx, fsys, rname)
+	return fs.OpenContext(ctx, d.rootFS(), name)
 }
 
-func (d *Device) ResolveFS(ctx context.Context, name string) (fs.FS, string, error) {
+func (d *Device) rootFS() fskit.UnionFS {
 	fsys := fskit.MapFS{
 		"new": fskit.OpenFunc(func(ctx context.Context, name string) (fs.File, error) {
 			if name == "." {
@@ -72,7 +68,6 @@ func (d *Device) ResolveFS(ctx context.Context, name string) (fs.FS, string, err
 					var el js.Value
 					var termData *terminalReadWriter
 					if name == "xterm" {
-						// 	xterm.Load()
 						// 	el = js.Global().Get("document").Call("createElement", "div")
 						// 	el.Set("className", "wanix-terminal")
 						// 	term := js.Global().Get("Terminal").New(map[string]any{
@@ -152,5 +147,9 @@ func (d *Device) ResolveFS(ctx context.Context, name string) (fs.FS, string, err
 			}, nil
 		}),
 	}
-	return fs.Resolve(fskit.UnionFS{fsys, fskit.MapFS(d.resources)}, ctx, name)
+	return fskit.UnionFS{fsys, fskit.MapFS(d.resources)}
+}
+
+func (d *Device) Route(ctx context.Context, name string) (fs.FS, string, error) {
+	return d.rootFS().Route(ctx, name)
 }

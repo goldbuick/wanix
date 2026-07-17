@@ -3,47 +3,102 @@ package fs
 import (
 	"context"
 	"fmt"
-	"path"
+	"reflect"
 )
 
-type ResolveFS interface {
+// RouteFS performs one path routing step from this filesystem.
+//
+// Given name relative to fsys, Route returns the filesystem that should handle
+// the remainder and rest, the path relative to that filesystem. Route must not
+// recurse into next; fs.Walk repeats Route until the path reaches a fixed point.
+// Returning (fsys, name) unchanged means this filesystem owns the path.
+type RouteFS interface {
 	FS
-	ResolveFS(ctx context.Context, name string) (FS, string, error)
+	Route(ctx context.Context, name string) (next FS, rest string, err error)
 }
 
-// ResolveTo resolves the name to an FS extension type if possible. It uses
-// ResolveFS if available, otherwise it falls back to SubFS.
+const maxRouteDepth = 32
+
+// Loc is a filesystem and a path relative to it.
+type Loc struct {
+	FS  FS
+	Rel string
+}
+
+type routeKey struct {
+	ptr uintptr
+	rel string
+}
+
+func routeFSKey(fsys FS) uintptr {
+	if fsys == nil {
+		return 0
+	}
+	v := reflect.ValueOf(fsys)
+	if v.Kind() != reflect.Pointer || v.IsNil() {
+		return 0
+	}
+	return v.Pointer()
+}
+
+func routeProgress(before Loc, next FS, rest string) bool {
+	return !Equal(before.FS, next) || before.Rel != rest
+}
+
+// Walk routes name through RouteFS layers until a fixed point.
+func Walk(ctx context.Context, fsys FS, name string) (Loc, error) {
+	loc := Loc{FS: fsys, Rel: name}
+	seen := make(map[routeKey]struct{})
+
+	for range maxRouteDepth {
+		r, ok := loc.FS.(RouteFS)
+		if !ok {
+			return loc, nil
+		}
+
+		next, rest, err := r.Route(ctx, loc.Rel)
+		if err != nil {
+			return Loc{}, err
+		}
+		if next == nil {
+			return Loc{}, fmt.Errorf("route: nil fs from %T", loc.FS)
+		}
+		if !routeProgress(loc, next, rest) {
+			return loc, nil
+		}
+
+		key := routeKey{ptr: routeFSKey(next), rel: rest}
+		if _, dup := seen[key]; dup {
+			return Loc{}, fmt.Errorf("route: cycle at %T %q", next, rest)
+		}
+		seen[key] = struct{}{}
+
+		loc = Loc{FS: next, Rel: rest}
+	}
+
+	return Loc{}, fmt.Errorf("route: exceeded max depth")
+}
+
+// ResolveTo resolves the name to an FS extension type if possible.
 func ResolveTo[T FS](fsys FS, ctx context.Context, name string) (T, string, error) {
 	var tfsys T
 
-	rfsys, rname, err := Resolve(fsys, ctx, name)
+	loc, err := Walk(ctx, fsys, name)
 	if err != nil {
 		return tfsys, "", err
 	}
 
-	// try to resolve again from here
-	if res, ok := rfsys.(ResolveFS); ok {
-		rrfsys, rrname, err := res.ResolveFS(ctx, rname)
-		if err == nil && (!Equal(rrfsys, rfsys) || rrname != rname) {
-			rfsys = rrfsys
-			rname = rrname
-		}
-	}
-
-	if v, ok := rfsys.(T); ok {
+	if v, ok := loc.FS.(T); ok {
 		tfsys = v
 	} else {
-		return tfsys, "", fmt.Errorf("resolve: %w on %T", ErrNotSupported, rfsys)
+		return tfsys, "", fmt.Errorf("resolve: %w on %T", ErrNotSupported, loc.FS)
 	}
 
-	return tfsys, rname, nil
+	return tfsys, loc.Rel, nil
 }
 
-// Resolve resolves to the FS directly containing the name returning that
-// resolved FS and the relative name for that FS. It uses ResolveFS if
-// available, otherwise it falls back to SubFS. If unable to resolve,
-// it returns the original FS and the original name, but it can also
-// return a PathError if .
+// Resolve routes name to the filesystem that directly contains it and the
+// relative path on that filesystem.
 func Resolve(fsys FS, ctx context.Context, name string) (rfsys FS, rname string, err error) {
 	// defer func() {
 	// 	if rname != name {
@@ -59,41 +114,9 @@ func Resolve(fsys FS, ctx context.Context, name string) (rfsys FS, rname string,
 	// 		log.Println(strings.ReplaceAll(line, "fskit.", ""))
 	// 	}
 	// }()
-	if rfsys, ok := fsys.(ResolveFS); ok {
-		return rfsys.ResolveFS(ctx, name)
+	loc, err := Walk(ctx, fsys, name)
+	if err != nil {
+		return nil, "", err
 	}
-
-	if name == "." {
-		rfsys = fsys
-		rname = name
-		return
-	}
-
-	dirfs, e := Sub(fsys, path.Dir(name))
-	if e != nil {
-		err = e
-		return
-	}
-
-	if Equal(dirfs, fsys) {
-		rfsys = fsys
-		rname = name
-		return
-	}
-
-	if subfs, ok := dirfs.(*SubdirFS); ok {
-		rfsys = subfs.Fsys
-
-		if Equal(subfs.Fsys, fsys) {
-			rname = name
-			return
-		}
-
-		rname, err = subfs.fullName("resolve", path.Base(name))
-		return
-	}
-
-	rfsys = dirfs
-	rname = path.Base(name)
-	return
+	return loc.FS, loc.Rel, nil
 }

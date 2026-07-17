@@ -3,6 +3,7 @@
 package web
 
 import (
+	"context"
 	"log"
 	"syscall/js"
 
@@ -11,6 +12,7 @@ import (
 	"tractor.dev/wanix/fs/fskit"
 	"tractor.dev/wanix/fs/pipe"
 	"tractor.dev/wanix/gojs"
+	"tractor.dev/wanix/misc/allocfs"
 	"tractor.dev/wanix/misc/jsutil"
 	"tractor.dev/wanix/wasi"
 	"tractor.dev/wanix/web/caches"
@@ -28,6 +30,9 @@ func New(root *wanix.Task) fskit.MapFS {
 		"caches":  caches.New(),
 		"worker":  workerfs,
 		"dl":      dl.New(),
+		"fsa": allocfs.New(func(ctx context.Context, id string, opts map[string]string) (fs.FS, error) {
+			return fsa.ShowDirectoryPicker(), nil
+		}),
 	}
 	opfs, err := fsa.OPFS()
 	if err != nil {

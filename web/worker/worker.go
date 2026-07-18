@@ -8,6 +8,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall/js"
 
 	"tractor.dev/toolkit-go/engine/cli"
@@ -115,20 +116,28 @@ func (r *Resource) Start(args ...string) error {
 			return nil
 		}
 		vmValue := data.Get("vm")
-		// Mount as soon as the export port arrives. The guest already started its
-		// p9 server before postMessage returned; waiting for a "!" handshake is
-		// racy under Go wasm scheduling and can leave #task/<rid>/export missing.
+		// Wait for the guest ready signal ("!") before ClientFS. Immediate
+		// dial races the p9 server and yields "buffer contained no valid
+		// message". The "!" is delivered on this temporary onmessage and is
+		// replaced by PortReadWriter once we mount -- it never enters 9P.
+		var mountmu sync.Mutex
 		mounted := false
-		tryMount := func() {
+		exportPort.Set("onmessage", js.FuncOf(func(this js.Value, args []js.Value) any {
+			mountmu.Lock()
 			if mounted {
-				return
+				mountmu.Unlock()
+				return nil
 			}
 			mounted = true
+			mountmu.Unlock()
 			go func() {
 				conn := misc.NewFakeConn(jsutil.NewPortReadWriter(exportPort))
 				exportFS, err := p9kit.ClientFS(conn, "")
 				if err != nil {
 					log.Println("error creating client for export", err)
+					mountmu.Lock()
+					mounted = false
+					mountmu.Unlock()
 					return
 				}
 				wanix.Export(r.task, exportFS)
@@ -154,13 +163,8 @@ func (r *Resource) Start(args ...string) error {
 					log.Println("error setting guest", err)
 				}
 			}()
-		}
-		// Prefer immediate mount; also accept a late guest "!" if one arrives.
-		exportPort.Set("onmessage", js.FuncOf(func(this js.Value, _ []js.Value) any {
-			tryMount()
 			return nil
 		}))
-		tryMount()
 
 		return nil
 	}))

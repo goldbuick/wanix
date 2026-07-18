@@ -4382,7 +4382,7 @@ function applyPatchPollOneoff(self) {
       nsubscriptions * size_event
     );
     for (let i = 0; i < nsubscriptions; ++i) {
-      let assertOpenFileAvailable = function() {
+      let assertOpenFileAvailable2 = function() {
         const fd = subscriptions.getUint32(
           i * size_subscription + subscription_u_offset + subscription_u_tag_size,
           true
@@ -4392,7 +4392,7 @@ function applyPatchPollOneoff(self) {
           throw new Error(`FD#${fd} cannot be polled!`);
         }
         return openFile;
-      }, setEventFdReadWrite = function(size) {
+      }, setEventFdReadWrite2 = function(size) {
         events.setUint16(
           i * size_event + event_type_offset,
           wasi_defs_exports.EVENTTYPE_FD_READ,
@@ -4409,6 +4409,7 @@ function applyPatchPollOneoff(self) {
           true
         );
       };
+      var assertOpenFileAvailable = assertOpenFileAvailable2, setEventFdReadWrite = setEventFdReadWrite2;
       const subscription_userdata_offset = 0;
       const userdata = subscriptions.getBigUint64(
         i * size_subscription + subscription_userdata_offset,
@@ -4443,11 +4444,11 @@ function applyPatchPollOneoff(self) {
           );
           break;
         case wasi_defs_exports.EVENTTYPE_FD_READ:
-          const fileR = assertOpenFileAvailable();
-          setEventFdReadWrite(fileR.file.size);
+          const fileR = assertOpenFileAvailable2();
+          setEventFdReadWrite2(fileR.file.size);
           break;
         case wasi_defs_exports.EVENTTYPE_FD_WRITE:
-          setEventFdReadWrite(1n << 31n);
+          setEventFdReadWrite2(1n << 31n);
           break;
         default:
           throw new Error(`Unknown event type: ${subscription_u_tag}`);

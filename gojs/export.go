@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"syscall/js"
+	"time"
 
 	"github.com/hugelgupf/p9/p9"
 	"tractor.dev/wanix/fs"
@@ -15,6 +16,8 @@ import (
 
 func Export(fsys fs.FS, debug bool) error {
 	msgch := js.Global().Get("MessageChannel").New()
+	// Hand port2 to the parent first so it can attach an onmessage ready
+	// listener before we signal. Parent must NOT ClientFS until it sees "!".
 	js.Global().Get("self").Call("postMessage", map[string]any{
 		"export": msgch.Get("port2"),
 	}, []any{msgch.Get("port2")})
@@ -30,8 +33,10 @@ func Export(fsys fs.FS, debug bool) error {
 			log.Fatal(err)
 		}
 	}()
-	// Do not post a "!" handshake. The parent mounts the export port as soon as
-	// it receives this MessageChannel; a string "!" would corrupt the p9 stream
-	// if the parent already attached NewPortReadWriter.
+	// Yield so Handle is parked on Read before the ready signal. The string
+	// "!" is consumed by the parent's temporary onmessage handler and never
+	// enters the 9P stream (PortReadWriter is attached only after "!").
+	time.Sleep(50 * time.Millisecond)
+	msgch.Get("port1").Call("postMessage", "!")
 	return nil
 }

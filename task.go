@@ -197,15 +197,17 @@ func (r *Task) OpenFD(file fs.File, path string) int {
 
 func (r *Task) CloseFD(fd int) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if fd < 0 || fd > r.fdIdx {
+		r.mu.Unlock()
 		return fs.ErrInvalid
 	}
 	f, ok := r.fds[fd]
 	if !ok {
+		r.mu.Unlock()
 		return fs.ErrInvalid
 	}
 	delete(r.fds, fd)
+	r.mu.Unlock()
 	return f.file.Close()
 }
 

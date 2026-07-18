@@ -88,19 +88,30 @@ func (r *Resource) Start(args ...string) error {
 		if data.IsUndefined() || data.IsNull() {
 			return nil
 		}
-		// ZSS fork: forward guest export-dirty notify to iframe host hook.
-		// Remove when wanix gains a generic gojs→host message bridge.
-		// See ops/patches/wanix-worker-zedcafeexportdirty.patch in zed-software-system.
-		if data.Type() == js.TypeObject && data.Get("zedcafeexportdirty").Truthy() {
-			hook := js.Global().Get("__wanixOnZedcafeExportDirty")
-			if hook.Type() == js.TypeFunction {
-				hook.Invoke(r.task.ID())
+		exportPort := data.Get("export")
+		// ZSS fork: generic gojs->host message bridge. Any object payload
+		// without an export port forwards to a host-registered hook keyed
+		// by task id. See ops/patches/wanix-worker-zedcafeexportdirty.patch
+		// in zed-software-system.
+		if data.Type() == js.TypeObject && exportPort.IsUndefined() {
+			bridge := js.Global().Get("__wanixOnGojsWorkerMessage")
+			if bridge.Type() == js.TypeFunction {
+				bridge.Invoke(r.task.ID(), data)
+				return nil
+			}
+			// Backward compat: hosts that have not migrated to the generic
+			// bridge only registered the zedcafe-specific hook. Remove once
+			// all hosts register __wanixOnGojsWorkerMessage.
+			if data.Get("zedcafeexportdirty").Truthy() {
+				hook := js.Global().Get("__wanixOnZedcafeExportDirty")
+				if hook.Type() == js.TypeFunction {
+					hook.Invoke(r.task.ID())
+				}
 			}
 			return nil
 		}
 		// all we handle are ns exports for now
-		exportPort := data.Get("export")
-		if exportPort.IsUndefined() || exportPort.IsNull() {
+		if exportPort.IsNull() {
 			return nil
 		}
 		vmValue := data.Get("vm")

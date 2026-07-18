@@ -30,6 +30,12 @@ func Export(fsys fs.FS, debug bool) error {
 			log.Fatal(err)
 		}
 	}()
-	msgch.Get("port1").Call("postMessage", "!") // signal to worker that export is ready
+	// Delay the handshake so the parent worker can attach onmessage before
+	// the signal is posted (avoids a lost "!" when the parent handler used to
+	// run inside go func after this returns).
+	js.Global().Call("setTimeout", js.FuncOf(func(this js.Value, _ []js.Value) any {
+		msgch.Get("port1").Call("postMessage", "!")
+		return nil
+	}), 0)
 	return nil
 }

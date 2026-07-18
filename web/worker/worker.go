@@ -85,6 +85,9 @@ func (r *Resource) Start(args ...string) error {
 
 	r.worker.Call("addEventListener", "message", js.FuncOf(func(this js.Value, args []js.Value) any {
 		data := args[0].Get("data")
+		if data.IsUndefined() || data.IsNull() {
+			return nil
+		}
 		// ZSS fork: forward guest export-dirty notify to iframe host hook.
 		// Remove when wanix gains a generic gojs→host message bridge.
 		// See ops/patches/wanix-worker-zedcafeexportdirty.patch in zed-software-system.
@@ -96,50 +99,59 @@ func (r *Resource) Start(args ...string) error {
 			return nil
 		}
 		// all we handle are ns exports for now
-		if data.Type() != js.TypeObject {
-			return nil
-		}
 		exportPort := data.Get("export")
-		if exportPort.IsUndefined() {
+		if exportPort.IsUndefined() || exportPort.IsNull() {
 			return nil
 		}
 		vmValue := data.Get("vm")
-		// Set onmessage synchronously before returning so the guest "!" handshake
-		// (posted immediately after transfer) is not dropped on a late go-func.
-		exportPort.Set("onmessage", js.FuncOf(func(this js.Value, _ []js.Value) any {
-			go func() {
-				// use initial signal message to mount export
-				conn := misc.NewFakeConn(jsutil.NewPortReadWriter(exportPort))
-				exportFS, err := p9kit.ClientFS(conn, "")
-				if err != nil {
-					log.Println("error creating client for export", err)
-					return
-				}
-				wanix.Export(r.task, exportFS)
+		mountExport := func() {
+			conn := misc.NewFakeConn(jsutil.NewPortReadWriter(exportPort))
+			exportFS, err := p9kit.ClientFS(conn, "")
+			if err != nil {
+				log.Println("error creating client for export", err)
+				return
+			}
+			wanix.Export(r.task, exportFS)
 
-				// vm guest is still special cased for now
-				if vmValue.IsUndefined() {
-					return
-				}
-				vmID := vmValue.String()
-				rfsys, _, err := fs.Resolve(r.task.Root().NS(), context.Background(), path.Join("#vm", vmID))
-				if err != nil {
-					log.Println("error resolving vm", vmID, err)
-					return
-				}
-				vms := rfsys.(*vm.Device)
-				vm, err := vms.Lookup(vmID)
-				if err != nil {
-					log.Println("error looking up vm", vmID, err)
-					return
-				}
-				log.Println("mounting guest...")
-				if err := vm.SetGuest(metacache.New(exportFS)); err != nil {
-					log.Println("error setting guest", err)
-				}
-			}()
+			// vm guest is still special cased for now
+			if vmValue.IsUndefined() {
+				return
+			}
+			vmID := vmValue.String()
+			rfsys, _, err := fs.Resolve(r.task.Root().NS(), context.Background(), path.Join("#vm", vmID))
+			if err != nil {
+				log.Println("error resolving vm", vmID, err)
+				return
+			}
+			vms := rfsys.(*vm.Device)
+			vm, err := vms.Lookup(vmID)
+			if err != nil {
+				log.Println("error looking up vm", vmID, err)
+				return
+			}
+			log.Println("mounting guest...")
+			if err := vm.SetGuest(metacache.New(exportFS)); err != nil {
+				log.Println("error setting guest", err)
+			}
+		}
+		// Prefer handshake "!" when it arrives; also mount after a short delay
+		// if the signal was already posted before this listener was attached.
+		mounted := false
+		tryMount := func() {
+			if mounted {
+				return
+			}
+			mounted = true
+			go mountExport()
+		}
+		exportPort.Set("onmessage", js.FuncOf(func(this js.Value, _ []js.Value) any {
+			tryMount()
 			return nil
 		}))
+		js.Global().Call("setTimeout", js.FuncOf(func(this js.Value, _ []js.Value) any {
+			tryMount()
+			return nil
+		}), 0)
 
 		return nil
 	}))

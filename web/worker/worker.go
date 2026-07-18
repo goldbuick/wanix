@@ -104,10 +104,16 @@ func (r *Resource) Start(args ...string) error {
 			return nil
 		}
 		vmValue := data.Get("vm")
-		// Attach handshake listener synchronously so a delayed guest "!" is received.
-		exportPort.Set("onmessage", js.FuncOf(func(this js.Value, _ []js.Value) any {
+		// Mount as soon as the export port arrives. The guest already started its
+		// p9 server before postMessage returned; waiting for a "!" handshake is
+		// racy under Go wasm scheduling and can leave #task/<rid>/export missing.
+		mounted := false
+		tryMount := func() {
+			if mounted {
+				return
+			}
+			mounted = true
 			go func() {
-				// use initial signal message to mount export
 				conn := misc.NewFakeConn(jsutil.NewPortReadWriter(exportPort))
 				exportFS, err := p9kit.ClientFS(conn, "")
 				if err != nil {
@@ -137,8 +143,13 @@ func (r *Resource) Start(args ...string) error {
 					log.Println("error setting guest", err)
 				}
 			}()
+		}
+		// Prefer immediate mount; also accept a late guest "!" if one arrives.
+		exportPort.Set("onmessage", js.FuncOf(func(this js.Value, _ []js.Value) any {
+			tryMount()
 			return nil
 		}))
+		tryMount()
 
 		return nil
 	}))

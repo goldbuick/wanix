@@ -30,12 +30,8 @@ func Export(fsys fs.FS, debug bool) error {
 			log.Fatal(err)
 		}
 	}()
-	// Delay the handshake so the parent worker can attach onmessage before
-	// the signal is posted (avoids a lost "!" when the parent handler used to
-	// run inside go func after this returns).
-	js.Global().Call("setTimeout", js.FuncOf(func(this js.Value, _ []js.Value) any {
-		msgch.Get("port1").Call("postMessage", "!")
-		return nil
-	}), 0)
+	// Do not post a "!" handshake. The parent mounts the export port as soon as
+	// it receives this MessageChannel; a string "!" would corrupt the p9 stream
+	// if the parent already attached NewPortReadWriter.
 	return nil
 }

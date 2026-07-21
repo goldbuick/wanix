@@ -380,6 +380,18 @@ func (fsys *FS) Create(name string) (fs.File, error) {
 		return nil, &fs.PathError{Op: "create", Path: name, Err: err}
 	}
 
+	// getFileHandle({create:true}) does not clear existing bytes. POSIX Create
+	// truncates; commit size 0 before returning so unused Create+Close (e.g.
+	// OpenFile O_TRUNC + chmod reopen) cannot leave stale content.
+	tmp := fsys.openFile(name, handle, false)
+	if err := tmp.Truncate(0); err != nil {
+		_ = tmp.Close()
+		return nil, &fs.PathError{Op: "create", Path: name, Err: err}
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, &fs.PathError{Op: "create", Path: name, Err: err}
+	}
+
 	// Invalidate stat cache since we created/truncated a file
 	fsys.invalidateCachedStat(name)
 

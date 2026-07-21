@@ -86,6 +86,7 @@ func (h *FileHandle) Truncate(size int64) error {
 			"type": "truncate",
 			"size": size,
 		}))
+		h.offset = 0
 
 		// Invalidate stat cache since file size changed
 		h.fsys.invalidateCachedStat(h.path)

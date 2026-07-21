@@ -78,6 +78,15 @@ func OpenFile(fsys FS, name string, flag int, perm FileMode) (f File, err error)
 			if err != nil {
 				return nil, err
 			}
+			// Create alone may not commit a truncate (e.g. FSA getFileHandle).
+			// Open after chmod often keeps existing bytes (keepExistingData).
+			// Re-assert O_TRUNC so a shorter WriteFile cannot leave trailing garbage.
+			if flag&os.O_TRUNC != 0 {
+				if err := Truncate(fsys, name, 0); err != nil && !errors.Is(err, ErrNotSupported) {
+					f.Close()
+					return nil, err
+				}
+			}
 		}
 		// O_APPEND means append to existing file
 		if flag&os.O_APPEND != 0 {
